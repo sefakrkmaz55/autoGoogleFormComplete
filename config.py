@@ -1,6 +1,11 @@
 """Google Form şeması: 73 soru, entry ID'ler, seçenekler."""
 
-FORM_ID = "1FAIpQLSfzLnr_ZbFBeeT2b1-Cf8AO0Sls3FUUjsjwKKRtXcvLcxdiEw"
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+FORM_ID = os.getenv("FORM_ID", "")
 FORM_URL = f"https://docs.google.com/forms/d/e/{FORM_ID}/formResponse"
 
 # ---------------------------------------------------------------------------

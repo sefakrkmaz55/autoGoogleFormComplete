@@ -38,7 +38,8 @@ An AI-powered bot that automatically fills and submits a 73-question academic Go
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Create .env file with your API key (at least one)
+# 2. Create .env file
+FORM_ID=your-google-form-id       # Required — the form's unique ID
 GROQ_API_KEY=your-groq-key        # Free — recommended
 GEMINI_API_KEY=your-gemini-key     # Free tier available
 ANTHROPIC_API_KEY=your-claude-key  # Paid
