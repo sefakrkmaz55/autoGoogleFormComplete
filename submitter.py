@@ -1,6 +1,7 @@
 """Google Forms HTTP POST ile çok sayfalı form gönderimi."""
 
 import re
+
 import requests
 
 from config import FORM_ID
@@ -142,10 +143,19 @@ def submit_form(answers: dict[str, str]) -> dict:
     session.headers.update({"User-Agent": USER_AGENT})
 
     # 1. İlk GET ile form token'larını al
-    resp = session.get(VIEW_URL, timeout=30)
+    try:
+        resp = session.get(VIEW_URL, timeout=30)
+    except requests.RequestException as e:
+        return {"success": False, "status_code": 0,
+                "message": f"Form GET network hatası: {e}"}
+
     if resp.status_code != 200:
         return {"success": False, "status_code": resp.status_code,
                 "message": "Form sayfası yüklenemedi"}
+
+    if _is_form_closed(resp.text):
+        return {"success": False, "status_code": resp.status_code,
+                "message": "Form kapalı veya yanıt kabul etmiyor"}
 
     fbzx = _extract_fbzx(resp.text)
     if not fbzx:
@@ -153,7 +163,8 @@ def submit_form(answers: dict[str, str]) -> dict:
                 "message": "fbzx token bulunamadı"}
 
     # 2. Her sayfa için POST gönder
-    page_history = []
+    page_history: list[str] = []
+    resp = None
     for page_idx, page_entries in enumerate(PAGES):
         page_history.append(str(page_idx))
         is_last_page = (page_idx == len(PAGES) - 1)
@@ -162,28 +173,33 @@ def submit_form(answers: dict[str, str]) -> dict:
             answers, page_entries, page_history, fbzx, is_last_page
         )
 
-        resp = session.post(
-            SUBMIT_URL,
-            data=payload,
-            headers={
-                "Referer": VIEW_URL,
-                "Origin": "https://docs.google.com",
-            },
-            timeout=30,
-        )
+        try:
+            resp = session.post(
+                SUBMIT_URL,
+                data=payload,
+                headers={
+                    "Referer": VIEW_URL,
+                    "Origin": "https://docs.google.com",
+                },
+                timeout=30,
+            )
+        except requests.RequestException as e:
+            return {"success": False, "status_code": 0,
+                    "message": f"Sayfa {page_idx} POST network hatası: {e}"}
 
-        # Son sayfa değilse devam et
-        if not is_last_page:
-            # Ara sayfa yanıtı — hata yoksa devam
-            continue
+        # Ara sayfalarda 4xx/5xx fail-fast
+        if not is_last_page and resp.status_code >= 400:
+            return {"success": False, "status_code": resp.status_code,
+                    "message": f"Sayfa {page_idx} POST {resp.status_code}"}
+
+        # Ara sayfalarda dönen HTML form-closed pattern içeriyorsa de fail-fast
+        if not is_last_page and _is_form_closed(resp.text):
+            return {"success": False, "status_code": resp.status_code,
+                    "message": f"Sayfa {page_idx} yanıtı form-closed işareti içeriyor"}
 
     # 3. Son yanıtı kontrol et
-    success = (
-        "Yanıtınız kaydedildi" in resp.text
-        or "kaydedilmiştir" in resp.text
-        or "Your response has been recorded" in resp.text
-        or "freebirdFormviewerViewResponseConfirmation" in resp.text
-    )
+    assert resp is not None  # PAGES boş değilse her zaman atanır
+    success = _is_submission_confirmed(resp.text)
 
     return {
         "success": success,
@@ -203,20 +219,10 @@ def _build_page_payload(
         sub_id = ENTRY_TO_SUB.get(entry_id, entry_id)
         value = answers.get(entry_id, "")
 
+        payload[f"entry.{sub_id}"] = value
+        # Checkbox alanları + boş bir sentinel field talep eder (Google Forms şartı)
         if entry_id in CHECKBOX_ENTRIES:
-            # Checkbox: entry.SUB_ID = value
-            payload[f"entry.{sub_id}"] = value
-            # Sentinel field
             payload[f"entry.{sub_id}_sentinel"] = ""
-        elif entry_id in TEXT_ENTRIES:
-            # Open text: entry.SUB_ID = value
-            payload[f"entry.{sub_id}"] = value
-        elif entry_id in SCALE_ENTRIES:
-            # Linear scale: entry.SUB_ID = value
-            payload[f"entry.{sub_id}"] = value
-        else:
-            # Radio button (type=2): entry.SUB_ID = value
-            payload[f"entry.{sub_id}"] = value
 
     payload["fvv"] = "1"
     payload["partialResponse"] = f"[null,null,\"{fbzx}\"]"
@@ -229,12 +235,49 @@ def _build_page_payload(
     return payload
 
 
+_FORM_CLOSED_PATTERNS = (
+    "Bu form artık yanıt kabul etmiyor",
+    "This form is no longer accepting responses",
+    "Yanıtlar artık kabul edilmiyor",
+    "form is closed",
+)
+
+_SUBMISSION_CONFIRMED_PATTERNS = (
+    "Yanıtınız kaydedildi",
+    "kaydedilmiştir",
+    "Your response has been recorded",
+    "freebirdFormviewerViewResponseConfirmation",
+    "FormResponsePage",
+)
+
+
+def _is_form_closed(html: str) -> bool:
+    """Formun kapalı/yanıt kabul etmediği ekranlarını tespit eder."""
+    return any(p in html for p in _FORM_CLOSED_PATTERNS)
+
+
+def _is_submission_confirmed(html: str) -> bool:
+    """Son POST yanıtının onay ekranı olup olmadığını kontrol eder."""
+    return any(p in html for p in _SUBMISSION_CONFIRMED_PATTERNS)
+
+
 def _extract_fbzx(html: str) -> str | None:
-    """HTML'den fbzx token'ını çıkarır."""
+    """HTML'den fbzx token'ını 3 farklı pattern ile çıkarır (L6: fallback chain)."""
+    # 1) JSON config: "fbzx":"123..."
     match = re.search(r'"fbzx"\s*:\s*"(-?\d+)"', html)
     if match:
         return match.group(1)
+    # 2) Hidden input: name="fbzx" value="..."
     match = re.search(r'name="fbzx"[^>]*value="([^"]+)"', html)
+    if match:
+        return match.group(1)
+    # 3) FB_PUBLIC_LOAD_DATA_ array: fbzx genelde son string elemanlardan biri.
+    #    Konum sabit değil — array içindeki uzun rakamsal string'i yakalayalım.
+    match = re.search(
+        r'FB_PUBLIC_LOAD_DATA_\s*=\s*\[.*?"(-?\d{10,})"\s*[,\]]',
+        html,
+        re.DOTALL,
+    )
     if match:
         return match.group(1)
     return None

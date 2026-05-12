@@ -13,8 +13,11 @@ class Perspective:
 
 
 def _base_prompt(yaklaşım_adı: str, yaklaşım_açıklama: str, eğilimler: str) -> str:
+    # NOT: Yaş, sınıf, gelir, sosyal medya süresi RUNTIME'da `generator._build_seed_block`
+    # tarafından enjekte edilir → hardcoded değer YOK. Yoksa diversity injection
+    # ile çelişir.
     return (
-        f"Sen 21 yaşında, Türkiye'de bir devlet üniversitesinde okuyan bir üniversite öğrencisisin. "
+        f"Sen Türkiye'de bir devlet üniversitesinde okuyan bir üniversite öğrencisisin. "
         f"Doğal düşünce biçimin {yaklaşım_adı} psikolojik yaklaşımın ilkeleriyle örtüşüyor.\n\n"
         f"Yaklaşım açıklaması: {yaklaşım_açıklama}\n\n"
         f"Yanıt eğilimlerin:\n{eğilimler}\n\n"
@@ -23,7 +26,6 @@ def _base_prompt(yaklaşım_adı: str, yaklaşım_açıklama: str, eğilimler: s
         f"- Akademik terimler kullanma, doğal düşün.\n"
         f"- Tutarlı ol: demografik bilgiler ve ölçek yanıtları birbiriyle uyumlu olsun.\n"
         f"- Her soruyu SADECE verilen geçerli seçeneklerden biriyle yanıtla.\n"
-        f"- Yaş için 18-25 arası bir tam sayı ver.\n"
     )
 
 

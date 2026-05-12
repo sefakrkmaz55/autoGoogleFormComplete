@@ -1,12 +1,28 @@
 """Google Form şeması: 73 soru, entry ID'ler, seçenekler."""
 
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 FORM_ID = os.getenv("FORM_ID", "")
 FORM_URL = f"https://docs.google.com/forms/d/e/{FORM_ID}/formResponse"
+
+# ---------------------------------------------------------------------------
+# LLM model konfigürasyonu — env değişkenleri override eder
+# ---------------------------------------------------------------------------
+DEFAULT_MODELS = {
+    "groq": "llama-3.3-70b-versatile",
+    "gemini": "gemini-2.5-flash",
+    "claude": "claude-sonnet-4-20250514",
+}
+
+MODELS = {
+    "groq": os.getenv("GROQ_MODEL") or DEFAULT_MODELS["groq"],
+    "gemini": os.getenv("GEMINI_MODEL") or DEFAULT_MODELS["gemini"],
+    "claude": os.getenv("ANTHROPIC_MODEL") or DEFAULT_MODELS["claude"],
+}
 
 # ---------------------------------------------------------------------------
 # Ölçek tanımları
@@ -114,7 +130,7 @@ QUESTIONS = [
         "type": "multiple_choice",
         "options": [
             "Evet, bir planım var.",
-            "Kısmen net ancak belirsizlikler var.",
+            "Kısmet net ancak belirsizlikler var.",  # form yapımcısının yazım hatası ("Kısmen" değil) — bilerek kopyalandı
             "Hayır, henüz ne yapacağımı bilmiyorum.",
         ],
     },
@@ -565,3 +581,14 @@ QUESTIONS_BY_ID = {q["entry_id"]: q for q in QUESTIONS}
 
 # Tüm geçerli entry ID'leri
 ALL_ENTRY_IDS = [q["entry_id"] for q in QUESTIONS]
+
+# ---------------------------------------------------------------------------
+# Diversity injection: demografik seed havuzu
+# Generator runtime'da rastgele bir profil seçip system prompt'a enjekte eder
+# ---------------------------------------------------------------------------
+DEMOGRAPHIC_SEED_POOL = {
+    "yas": list(range(18, 26)),                          # 18-25 (validator 18-30 kabul ediyor, biz 18-25 ile rol-oynama)
+    "sinif": QUESTIONS_BY_ID["1710909935"]["options"],   # 1.sınıf, 2.sınıf, 3.sınıf, 4.sınıf
+    "gelir": QUESTIONS_BY_ID["1872607800"]["options"],   # 3 kategori
+    "sosyal_medya_suresi": QUESTIONS_BY_ID["706129097"]["options"],  # 4 kategori
+}
